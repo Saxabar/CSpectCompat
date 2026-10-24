@@ -42,7 +42,37 @@ build.bat "C:\path\to\CSpect"
 
 The result is `bin\Compat.dll`.
 
+## Fixed esxDOS plugin
+
+Some fixes cannot be made from a separate plugin, because they are in the esxDOS emulation of CSpect
+3, which is itself a plugin (`esxDOS.dll`, open source). The [esxDOS](esxDOS) folder holds Mike
+Dailly's esxDOS plugin source from [CSpectPlugins](https://github.com/mikedailly/CSpectPlugins/tree/master/esxDOS)
+with these changes in `CRST8.cs`:
+
+| Change | Why | Games |
+|---|---|---|
+| `DISK_FILEMAP` ($85) returns `HL` = address after the last entry, instead of 6 bytes further | games that check the length of the map (e.g. one entry for a file in one piece) stopped | Dreamworld Pogie Demo |
+| `eCPUFlags : UInt16` written as `: ushort` | same type, so that the C# 5 compiler included in Windows accepts it | - |
+
+To install it, rename CSpect's `esxDOS.dll` (e.g. to `esxDOS.dll.orig`, to go back to it later) and copy
+the fixed one next to `CSpect.exe`. It is used by every game, with or without `CSPECT_COMPAT`.
+
+Build it with `build-esxdos.bat`, which also needs `Plugin.dll` from the CSpect folder:
+
+```
+build-esxdos.bat "C:\path\to\CSpect"
+```
+
+The result is `bin\esxDOS.dll`.
+
+Known limit, not fixable from a plugin: CSpect does not pass block I/O instructions (`INI`, `INIR`,
+`OTIR`...) to plugins, so games that read streamed data with them (e.g. Dreamworld Pogie Demo's music)
+get no data from the esxDOS streaming.
+
 ## License
 
 GPL-3.0, see [LICENSE](LICENSE). The CSpect plugin interface (`Plugin.dll`) is by Mike Dailly,
 MIT licensed: https://github.com/mikedailly/CSpectPlugins
+
+The files in the [esxDOS](esxDOS) folder are Mike Dailly's esxDOS plugin with the changes listed
+above, MIT licensed: see [esxDOS/LICENSE](esxDOS/LICENSE).
