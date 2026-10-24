@@ -3,6 +3,9 @@
 A plugin for the [CSpect](https://mdf200.itch.io/cspect) ZX Spectrum Next emulator by Mike Dailly
 that helps games which worked in CSpect 2 but crash in CSpect 3.
 
+It is used by [CSpect Launcher](https://github.com/Saxabar/CSpectLauncher), a game launcher for CSpect
+(Windows, Linux and macOS) where each fix can be turned on per game from the right-click menu.
+
 The fixes are chosen per game with the `CSPECT_COMPAT` environment variable (a comma-separated list
 of options). Without the variable the plugin does nothing, so it can stay installed for all games.
 
@@ -10,11 +13,9 @@ of options). Without the variable the plugin does nothing, so it can stay instal
 
 | Option | What it does | Games |
 |---|---|---|
-| `l2bank9` | Layer 2 starts at 16K bank 9 (Next register `$12`), as in older Next cores. CSpect 3 sets it to 8 when it loads a `.snx` file, so games that never set it draw over their own data. | Montana Mike |
+| `l2bank9` | Layer 2 starts at 16K bank 9 (Next register `$12`), as in older Next cores. CSpect 3 sets it to 8 when it loads a `.snx` file, so games that never set it draw over their own data. | Montana Mike, Dweebs Drop |
 | `nodivmmc` | DivMMC automap off (bit 4 of Next register `$0A`). CSpect 3 maps the DivMMC memory when the CPU reaches `$0038` even when RAM is paged in place of the ROM, so a game that calls code there runs the DivMMC memory instead (random values: the game starts only sometimes). Loading files with esxDOS still works, as CSpect serves it itself. | Deltas Shadow |
-
 | `dd01nop` | `DD 01` in the game's `.nex` becomes a 2-byte NOP, as in CSpect 2, where it was the debugger's BREAK opcode and was skipped when the debugger was off. CSpect 3 uses `FD 00` for BREAK, so breakpoints left in a game run as `LD BC,nn` and swallow the next instruction. Needs the `.nex` in `CSPECT_COMPAT_FILE`; only the memory is changed, before the game starts, and only where the bytes are still `DD 01`. | Elite Next |
-
 | `zeroram` | The RAM outside the 128K snapshot (8K pages 16-255) is cleared before the game starts, as in CSpect 2. CSpect 3 fills it with random values, so a game that shows Layer 2 without clearing it shows them. Only for `.snx`/`.sna` games: a `.nex` can load its banks there. | Spice Invaderz |
 
 Several options can be combined, e.g. `CSPECT_COMPAT=l2bank9,nodivmmc`.
@@ -29,6 +30,8 @@ Several options can be combined, e.g. `CSPECT_COMPAT=l2bank9,nodivmmc`.
    set CSPECT_COMPAT=l2bank9
    CSpect.exe -w3 -vsync -zxnext -mmc=.\ MontanaMike.snx
    ```
+
+For `dd01nop`, also set `CSPECT_COMPAT_FILE` to the path of the game's `.nex`.
 
 When the plugin is active, the CSpect console shows `Compat added (l2bank9)`.
 
@@ -61,7 +64,8 @@ with these changes in `CRST8.cs`:
 To install it, rename CSpect's `esxDOS.dll` (e.g. to `esxDOS.dll.orig`, to go back to it later) and copy
 the fixed one next to `CSpect.exe`. It is used by every game, with or without `CSPECT_COMPAT`.
 
-Build it with `build-esxdos.bat`, which also needs `Plugin.dll` from the CSpect folder:
+Download `esxDOS.dll` from the [Releases](../../releases) page, or build it with `build-esxdos.bat`,
+which also needs `Plugin.dll` from the CSpect folder:
 
 ```
 build-esxdos.bat "C:\path\to\CSpect"
@@ -72,6 +76,12 @@ The result is `bin\esxDOS.dll`.
 Known limit, not fixable from a plugin: CSpect does not pass block I/O instructions (`INI`, `INIR`,
 `OTIR`...) to plugins, so games that read streamed data with them (e.g. Dreamworld Pogie Demo's music)
 get no data from the esxDOS streaming.
+
+## Related projects
+
+- [CSpect Launcher](https://github.com/Saxabar/CSpectLauncher): game launcher for CSpect, with covers,
+  ratings and favourites; it sets `CSPECT_COMPAT` and `CSPECT_COMPAT_FILE` for the games that need a fix
+- [CSpect Scanlines](https://github.com/Saxabar/CSpectScanlines): TV-style scanlines over the CSpect window
 
 ## License
 
