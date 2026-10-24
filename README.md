@@ -15,6 +15,8 @@ of options). Without the variable the plugin does nothing, so it can stay instal
 
 | `dd01nop` | `DD 01` in the game's `.nex` becomes a 2-byte NOP, as in CSpect 2, where it was the debugger's BREAK opcode and was skipped when the debugger was off. CSpect 3 uses `FD 00` for BREAK, so breakpoints left in a game run as `LD BC,nn` and swallow the next instruction. Needs the `.nex` in `CSPECT_COMPAT_FILE`; only the memory is changed, before the game starts, and only where the bytes are still `DD 01`. | Elite Next |
 
+| `zeroram` | The RAM outside the 128K snapshot (8K pages 16-255) is cleared before the game starts, as in CSpect 2. CSpect 3 fills it with random values, so a game that shows Layer 2 without clearing it shows them. Only for `.snx`/`.sna` games: a `.nex` can load its banks there. | Spice Invaderz |
+
 Several options can be combined, e.g. `CSPECT_COMPAT=l2bank9,nodivmmc`.
 
 ## Installation

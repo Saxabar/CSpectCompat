@@ -12,6 +12,9 @@
 //             opcode (skipped when the debugger was off). CSpect 3 uses FD 00 for BREAK, so breakpoints
 //             left in a game (e.g. Elite Next) run as LD BC,nn and swallow the next instruction. The .nex
 //             is given in CSPECT_COMPAT_FILE; the bytes are changed in memory only, before the game starts.
+//   zeroram   RAM outside the 128K snapshot (8K pages 16-255) cleared before the game starts, as in CSpect 2.
+//             CSpect 3 fills it with random values, and a game that shows Layer 2 without clearing it
+//             (e.g. Spice Invaderz) shows them. Only for .snx/.sna games: a .nex can load banks there.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -22,7 +25,7 @@ namespace Compat
     public class CompatPlugin : iPlugin
     {
         iCSpect CSpect;
-        bool l2bank9, nodivmmc, dd01nop;
+        bool l2bank9, nodivmmc, dd01nop, zeroram, cleared;
         long frame;
         List<int> breakpoints;         // DD 01 positions: 16K bank * 16384 + offset
         int patched;
@@ -37,16 +40,17 @@ namespace Compat
                 if (o.Equals("l2bank9", StringComparison.OrdinalIgnoreCase)) l2bank9 = true;
                 else if (o.Equals("nodivmmc", StringComparison.OrdinalIgnoreCase)) nodivmmc = true;
                 else if (o.Equals("dd01nop", StringComparison.OrdinalIgnoreCase)) dd01nop = true;
+                else if (o.Equals("zeroram", StringComparison.OrdinalIgnoreCase)) zeroram = true;
                 else Console.WriteLine(" Compat: unknown option " + o);
             }
-            if (dd01nop)
+            if (dd01nop) breakpoints = FindBreakpoints(Environment.GetEnvironmentVariable("CSPECT_COMPAT_FILE"));
+            if (dd01nop || zeroram)
             {
-                breakpoints = FindBreakpoints(Environment.GetEnvironmentVariable("CSPECT_COMPAT_FILE"));
-                // CSpect writes the Next registers while it loads the file: the patch is tried at each of
-                // those writes (frame 0), so that it is in place before the first instruction of the game
+                // CSpect writes the Next registers while it loads the file: the patch and the RAM clear are
+                // done at those writes (frame 0), so that they are in place before the game's first instruction
                 for (int r = 0; r < 256; r++) io.Add(new sIO(r, eAccess.NextReg_Write, 0, 0));
             }
-            if (l2bank9 || nodivmmc || dd01nop) Console.WriteLine(" Compat added (" + opts.Trim() + ")");
+            if (l2bank9 || nodivmmc || dd01nop || zeroram) Console.WriteLine(" Compat added (" + opts.Trim() + ")");
             return io;
         }
 
@@ -112,6 +116,12 @@ namespace Compat
 
         public bool Write(eAccess _type, int _port, int _id, byte _value)
         {
+            // the loader's first register write comes after CSpect has filled the RAM with random values
+            if (_type == eAccess.NextReg_Write && frame == 0 && zeroram && !cleared)
+            {
+                cleared = true;
+                for (int i = 16 * 8192; i < 256 * 8192; i++) CSpect.PokePhysical(i, 0);
+            }
             if (_type == eAccess.NextReg_Write && frame == 0 && patched < (breakpoints == null ? 0 : breakpoints.Count)) PatchBreakpoints();
             return false;
         }
@@ -129,7 +139,7 @@ namespace Compat
             if (nodivmmc) CSpect.SetNextRegister(0x0A, (byte)(CSpect.GetNextRegister(0x0A, 0) & ~0x10), 0);
         }
 
-        public void Reset() { frame = 0; }
+        public void Reset() { frame = 0; }          // the RAM is cleared once only: not again after F3
         public void OSTick() { }
         public bool KeyPressed(int _id) { return false; }
         public byte Read(eAccess _type, int _port, int _id, out bool _isvalid) { _isvalid = false; return 0; }
