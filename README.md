@@ -13,6 +13,8 @@ of options). Without the variable the plugin does nothing, so it can stay instal
 | `l2bank9` | Layer 2 starts at 16K bank 9 (Next register `$12`), as in older Next cores. CSpect 3 sets it to 8 when it loads a `.snx` file, so games that never set it draw over their own data. | Montana Mike |
 | `nodivmmc` | DivMMC automap off (bit 4 of Next register `$0A`). CSpect 3 maps the DivMMC memory when the CPU reaches `$0038` even when RAM is paged in place of the ROM, so a game that calls code there runs the DivMMC memory instead (random values: the game starts only sometimes). Loading files with esxDOS still works, as CSpect serves it itself. | Deltas Shadow |
 
+| `dd01nop` | `DD 01` in the game's `.nex` becomes a 2-byte NOP, as in CSpect 2, where it was the debugger's BREAK opcode and was skipped when the debugger was off. CSpect 3 uses `FD 00` for BREAK, so breakpoints left in a game run as `LD BC,nn` and swallow the next instruction. Needs the `.nex` in `CSPECT_COMPAT_FILE`; only the memory is changed, before the game starts, and only where the bytes are still `DD 01`. | Elite Next |
+
 Several options can be combined, e.g. `CSPECT_COMPAT=l2bank9,nodivmmc`.
 
 ## Installation
