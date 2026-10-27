@@ -90,6 +90,7 @@ with these changes in `CRST8.cs`:
 | Change | Why | Games |
 |---|---|---|
 | `DISK_FILEMAP` ($85) returns `HL` = address after the last entry, instead of 6 bytes further | games that check the length of the map (e.g. one entry for a file in one piece) stopped | Dreamworld Pogie Demo |
+| Game reads of the SD card (`CMD18`, after `DISK_FILEMAP`): the 2 CRC bytes after each 512-byte block, instead of over the block's bytes 508-509 | the first block of each read had two `$FF` bytes in it: in music streamed from the SD card, a click every block (a constant whine) | Atic Atac Next |
 | `eCPUFlags : UInt16` written as `: ushort` | same type, so that the C# 5 compiler included in Windows accepts it | - |
 
 To install it, rename CSpect's `esxDOS.dll` (e.g. to `esxDOS.dll.orig`, to go back to it later) and copy

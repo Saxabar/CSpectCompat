@@ -547,8 +547,9 @@ namespace esxDOS
                 }
                 catch { }
                 SectorBuffer[SECTOR_BUFFER_OFFEST-1] = 0xfe;
-                SectorBuffer[SectorBuffer.Length - 10] = 0xff;
-                SectorBuffer[SectorBuffer.Length - 9] = 0xff;
+                // the 2 CRC bytes after the 512 data bytes (they were at Length-10/-9, over data bytes 508-509)
+                SectorBuffer[SECTOR_BUFFER_OFFEST + 512] = 0xff;
+                SectorBuffer[SECTOR_BUFFER_OFFEST + 513] = 0xff;
                 for (int i = 0; i < SECTOR_BUFFER_SPACE_SIZE; i++)
                 {
                     SectorBuffer[i] = 0;
