@@ -1,13 +1,15 @@
 # CSpect Compat
 
 A plugin for the [CSpect](https://mdf200.itch.io/cspect) ZX Spectrum Next emulator by Mike Dailly
-that helps games which worked in CSpect 2 but crash in CSpect 3.
+that helps games which worked in CSpect 2, or work on the Next, but crash in CSpect 3.
 
 It is used by [CSpect Launcher](https://github.com/Saxabar/CSpectLauncher), a game launcher for CSpect
 (Windows, Linux and macOS) where each fix can be turned on per game from the right-click menu.
 
 The fixes are chosen per game with the `CSPECT_COMPAT` environment variable (a comma-separated list
-of options). Without the variable the plugin does nothing, so it can stay installed for all games.
+of options). Without the variable, they come from [Compat.ini](#without-cspect-launcher-compatini), a
+list of games found by the MD5 of their file. Without either, the plugin does nothing, so it can stay
+installed for all games.
 
 ## Options
 
@@ -15,15 +17,19 @@ of options). Without the variable the plugin does nothing, so it can stay instal
 |---|---|---|
 | `l2bank9` | Layer 2 starts at 16K bank 9 (Next register `$12`), as in older Next cores. CSpect 3 sets it to 8 when it loads a `.snx` file, so games that never set it draw over their own data. | Montana Mike, Dweebs Drop |
 | `nodivmmc` | DivMMC automap off (bit 4 of Next register `$0A`). CSpect 3 maps the DivMMC memory when the CPU reaches `$0038` even when RAM is paged in place of the ROM, so a game that calls code there runs the DivMMC memory instead (random values: the game starts only sometimes). Loading files with esxDOS still works, as CSpect serves it itself. | Deltas Shadow |
-| `dd01nop` | `DD 01` in the game's `.nex` becomes a 2-byte NOP, as in CSpect 2, where it was the debugger's BREAK opcode and was skipped when the debugger was off. CSpect 3 uses `FD 00` for BREAK, so breakpoints left in a game run as `LD BC,nn` and swallow the next instruction. Needs the `.nex` in `CSPECT_COMPAT_FILE`; only the memory is changed, before the game starts, and only where the bytes are still `DD 01`. | Elite Next |
+| `dd01nop` | `DD 01` in the game's `.nex` becomes a 2-byte NOP, as in CSpect 2, where it was the debugger's BREAK opcode and was skipped when the debugger was off. CSpect 3 uses `FD 00` for BREAK, so breakpoints left in a game run as `LD BC,nn` and swallow the next instruction. The `.nex` is the one in `CSPECT_COMPAT_FILE`, or else the one CSpect has loaded; only the memory is changed, before the game starts, and only where the bytes are still `DD 01`. The bytes are searched in all the banks, data included, so use it only for games that need it. | Elite Next |
 | `zeroram` | The RAM outside the 128K snapshot (8K pages 16-255) is cleared before the game starts, as in CSpect 2. CSpect 3 fills it with random values, so a game that shows Layer 2 without clearing it shows them. Only for `.snx`/`.sna` games: a `.nex` can load its banks there. | Spice Invaderz |
+| `divfirst` | DivMMC memory comes before the Layer 2 mapping, as on the Next. When Layer 2 is mapped for writing at `$0000` (port `$123B` bit 0), CSpect 3 sends the writes of DivMMC code (NextZXOS's interrupt handler and tape loader) to Layer 2, so NextZXOS loses its saved stack pointer and the machine resets. While DivMMC code runs, the plugin keeps those writes and gives them back when they are read. | 4K Race Next (loaded from tape with NextZXOS) |
+| `im2ff` | The IM 2 vector is read at `I*256+$FF`, as on the Next, where the data bus reads `$FF`. CSpect 3 reads it at `I*256+$00`, so a game that sets only the vector at `$xxFF` jumps to a random address at the first interrupt. Right after CSpect has taken the frame interrupt, the plugin sends the CPU through the vector at `$xxFF`; the game's memory is not changed. | 4K Race Next, Manic Miner Trick Or Treat AY, Space Racing |
+| `sdstream` | Streaming from the SD card done by the plugin instead of NextZXOS. NextZXOS's `DISK_STRMSTART` fails in CSpect 3, so a game that streams its music from the SD card stops on a black screen. `RST $08` `DISK_STRMSTART` / `DISK_STRMEND` return at once without error; while the stream is on, the game's own reads of the SD card port `$EB` get the blocks of the file it mapped with `DISK_FILEMAP`, read from the game's folder on the PC (`CSPECT_COMPAT_FILE` gives the folder, else the current one; silence if the file is not there). NextZXOS's own SD card reads are not changed. The game must be started with NextZXOS. | The Way of the Exploding Fist |
 
 Several options can be combined, e.g. `CSPECT_COMPAT=l2bank9,nodivmmc`.
 
 ## Installation
 
 1. Build `Compat.dll` (see below) or download it from the [Releases](../../releases) page.
-2. Copy it into the CSpect folder, next to `CSpect.exe`.
+2. Copy it into the CSpect folder, next to `CSpect.exe` (with `Compat.ini`, to use it without CSpect
+   Launcher).
 3. Start CSpect with the variable set, for example from a command prompt:
 
    ```
@@ -31,12 +37,36 @@ Several options can be combined, e.g. `CSPECT_COMPAT=l2bank9,nodivmmc`.
    CSpect.exe -w3 -vsync -zxnext -mmc=.\ MontanaMike.snx
    ```
 
-For `dd01nop`, also set `CSPECT_COMPAT_FILE` to the path of the game's `.nex`.
+For `dd01nop`, `CSPECT_COMPAT_FILE` can give the path of the game's `.nex`; without it, the plugin uses
+the file loaded by CSpect.
 
 When the plugin is active, the CSpect console shows `Compat added (l2bank9)`.
 
 [CSpect Launcher](https://github.com/Saxabar/CSpectLauncher) sets the variable for the games that
 need it.
+
+## Without CSpect Launcher: Compat.ini
+
+To start games straight from CSpect, without setting a variable each time, copy
+[Compat.ini](Compat.ini) next to `Compat.dll`. When CSpect loads a `.nex`, `.snx` or `.sna` file, the
+plugin computes its MD5 and uses the options listed for it:
+
+```
+; Montana Mike (MontanaMike.snx / MontanaMike.sna)
+4d94f98ab1ee9e3bdf879c5599f78a36=l2bank9
+```
+
+The file already lists the games above that need a fix when they are loaded by CSpect (Elite Next is
+left out: `dd01nop` is better turned on by hand). A renamed file is still found; a different version of
+a game has another MD5 and must be added. The CSpect console shows the MD5 of each file it loads
+(`Compat: MontanaMike.snx MD5 4d94...`); on Windows it can also be found with
+`certutil -hashfile <file> MD5`.
+
+`default=` gives the options for every file not listed. Games started from NextZXOS (the Browser, or a
+tape loaded with the Tape Loader) are not found by MD5, because CSpect has loaded the SD card image, not
+the game: for those, put the options in `default=`, e.g. `default=divfirst,im2ff` for 4K Race Next.
+
+`Compat.ini` is not used when `CSPECT_COMPAT` is set: CSpect Launcher's choices come first.
 
 ## Building
 

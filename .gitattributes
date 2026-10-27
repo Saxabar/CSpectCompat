@@ -1,3 +1,4 @@
 *.bat text eol=crlf
 *.cs text eol=crlf
 *.md text eol=lf
+*.ini text eol=crlf
