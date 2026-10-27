@@ -31,6 +31,12 @@
 //             stream is on, the game's own reads of the SD card port $EB get the file's blocks, each followed
 //             by 2 CRC bytes and the data token of the next one. The file is the one the game mapped with
 //             DISK_FILEMAP, read from the game's folder on the PC (silence if it is not there).
+//   divnmi    DivMMC NMI (Next register $02 bit 2) with the DivMMC memory paged in, as on the Next: from $0066
+//             to the RETN, $0000-$1FFF is the DivMMC ROM and $2000-$3FFF the DivMMC RAM bank of port $E3, as the
+//             game wrote them (the RAM with CONMEM, port $E3 bit 7; the ROM in config mode, registers $03 and
+//             $04); a new request while it is paged in is ignored. CSpect 3 runs the game's RAM at $0066, so a
+//             game that plays its sound from DivMMC NMIs (e.g. Atic Atac Next) crashes, or stays on the title
+//             screen waiting for the sound. The plugin keeps its own copy of that memory.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -42,7 +48,7 @@ namespace Compat
     public class CompatPlugin : iPlugin
     {
         iCSpect CSpect;
-        bool l2bank9, nodivmmc, dd01nop, zeroram, divfirst, im2ff, sdstream, cleared;
+        bool l2bank9, nodivmmc, dd01nop, zeroram, divfirst, im2ff, sdstream, divnmi, cleared;
         long frame;
         List<int> breakpoints;         // DD 01 positions: 16K bank * 16384 + offset
         int patched;
@@ -61,7 +67,7 @@ namespace Compat
         // sets the option flags from a comma-separated list
         void SetOptions(string opts)
         {
-            l2bank9 = nodivmmc = dd01nop = zeroram = divfirst = im2ff = sdstream = false;
+            l2bank9 = nodivmmc = dd01nop = zeroram = divfirst = im2ff = sdstream = divnmi = false;
             foreach (string o in opts.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 if (o.Equals("l2bank9", StringComparison.OrdinalIgnoreCase)) l2bank9 = true;
@@ -71,6 +77,7 @@ namespace Compat
                 else if (o.Equals("divfirst", StringComparison.OrdinalIgnoreCase)) divfirst = true;
                 else if (o.Equals("im2ff", StringComparison.OrdinalIgnoreCase)) im2ff = true;
                 else if (o.Equals("sdstream", StringComparison.OrdinalIgnoreCase)) sdstream = true;
+                else if (o.Equals("divnmi", StringComparison.OrdinalIgnoreCase)) divnmi = true;
                 else Console.WriteLine(" Compat: unknown option " + o);
             }
         }
@@ -152,6 +159,20 @@ namespace Compat
                 // done at those writes (frame 0), so that they are in place before the game's first instruction
                 for (int r = 0; r < 256; r++) io.Add(new sIO(r, eAccess.NextReg_Write, 0, 0));
             }
+            else if (divnmi) for (int r = 2; r <= 4; r++) io.Add(new sIO(r, eAccess.NextReg_Write, 0, 0));
+            if (divnmi)
+            {
+                // OUT ($E3),A puts A on the high byte of the port: every $xxE3
+                for (int b = 0; b < 256; b++) if (b != 0 || !divfirst) io.Add(new sIO((b << 8) | 0xE3, eAccess.Port_Write, 0, 0));
+                for (int a = 0; a < 0x4000; a++)
+                {
+                    if (divfirst && a >= 0x2000) continue;
+                    io.Add(new sIO(a, eAccess.Memory_Write, 0, 0));
+                    io.Add(new sIO(a, eAccess.Memory_Read, 0, 0));
+                }
+                // the RETN can return anywhere: the end of the NMI is seen at the next instruction
+                for (int a = 0; a < 0x10000; a++) io.Add(new sIO(a, eAccess.Memory_EXE, 0, 0));
+            }
             if (divfirst)
             {
                 io.Add(new sIO(0x123B, eAccess.Port_Write, 0, 0));
@@ -176,7 +197,7 @@ namespace Compat
                 if (byMd5.Count > 0) Console.WriteLine(" Compat added (Compat.ini, " + byMd5.Count + " entries)");
                 SetOptions("");
             }
-            else if (l2bank9 || nodivmmc || dd01nop || zeroram || divfirst || im2ff) Console.WriteLine(" Compat added (" + opts.Trim() + ")");
+            else if (l2bank9 || nodivmmc || dd01nop || zeroram || divfirst || im2ff || sdstream || divnmi) Console.WriteLine(" Compat added (" + opts.Trim() + ")");
             return io;
         }
 
@@ -247,12 +268,20 @@ namespace Compat
             if (_type == eAccess.Port_Write)
             {
                 if (_port == 0x123B) layer2Port = _value;
-                else if (_port == 0x00E3) divBank = _value & 0x0F;
+                else if ((_port & 0xFF) == 0xE3) { divBank = _value & 0x0F; divCtl = _value; }
                 return false;
             }
             if (_type == eAccess.Memory_Write)
             {
                 if (busy) return false;
+                // in config mode, SRAM bank 4 ($10000) is the DivMMC ROM: the game writes its NMI entry there
+                if (divnmi && _port < 0x2000 && configMode && configBank == 4) { divRom[_port] = _value; return true; }
+                if (divnmi && _port < 0x4000 && DivPaged())
+                {
+                    if (_port >= 0x2000) divBanks[divBank * 8192 + _port - 0x2000] = _value;
+                    else if (!nmiActive) divRom[_port] = _value;      // ROM: written only with CONMEM
+                    return true;
+                }
                 if (divfirst && divActive && _port >= 0x2000 && _port < 0x4000)
                 {
                     int key = divBank * 8192 + (_port - 0x2000);
@@ -265,6 +294,16 @@ namespace Compat
                 }
                 return false;
             }
+            // divnmi: an NMI is requested (written 0 to clear the request)
+            // (ignored while the DivMMC memory is paged in, as on the Next: the request is dropped)
+            if (_type == eAccess.NextReg_Write && divnmi && _port == 0x02)
+            {
+                if (nmiActive && (_value & 0x04) != 0) return true;
+                nmiPending = (_value & 0x04) != 0;
+            }
+            // divnmi: config mode (machine type 7 in register $03), with register $04 = SRAM bank at $0000
+            if (_type == eAccess.NextReg_Write && divnmi && _port == 0x03) configMode = (_value & 0x07) == 0x07;
+            if (_type == eAccess.NextReg_Write && divnmi && _port == 0x04) configBank = _value;
             // the loader's first register write comes after CSpect has filled the RAM with random values
             if (_type == eAccess.NextReg_Write && frame == 0 && zeroram && !cleared)
             {
@@ -432,12 +471,15 @@ namespace Compat
             }
             if (_type == eAccess.Memory_Read)
             {
+                if (divnmi && _port < 0x4000 && DivPaged()) { _isvalid = true; return DivPeek(_port); }
                 byte v;
                 if (divActive && divRam.Count > 0 && divRam.TryGetValue(divBank * 8192 + (_port - 0x2000), out v)) { _isvalid = true; return v; }
                 return 0;
             }
             if (_type != eAccess.Memory_EXE) return 0;
+            if (divnmi) DivNmiExe(_port);
             if (sdstream && _port == 0x0008 && SkipStream()) return 0;
+            if (!divfirst) return 0;
             // divfirst: DivMMC code runs from an entry point (with the ROM at $0000 and automap on) to $1FF8-$1FFF
             bool exit = _port >= 0x1FF8 && _port <= 0x1FFF;
             if (!divActive && !exit)
@@ -448,11 +490,28 @@ namespace Compat
             return 0;
         }
 
+        // divnmi: the DivMMC memory as the game wrote it, and whether it is paged in by an NMI
+        byte[] divRom = new byte[8192], divBanks = new byte[16 * 8192];
+        int divCtl;                    // last value written to port $E3
+        bool nmiPending, nmiActive, retnSeen, configMode;
+        int configBank;
+
+        bool DivPaged() { return nmiActive || (divCtl & 0x80) != 0; }
+        byte DivPeek(int a) { return a < 0x2000 ? divRom[a] : divBanks[divBank * 8192 + a - 0x2000]; }
+
+        // the NMI starts at $0066 after a request with register $02 and ends after the RETN
+        void DivNmiExe(int pc)
+        {
+            if (nmiActive && retnSeen) { nmiActive = retnSeen = false; }
+            if (!nmiActive && pc == 0x0066 && nmiPending) { nmiActive = true; nmiPending = false; }
+            if (nmiActive && pc < 0x3FFF && DivPeek(pc) == 0xED && DivPeek(pc + 1) == 0x45) retnSeen = true;
+        }
+
         // CSpect resets after loading a file, before the loader's register writes; the RAM is cleared once only,
         // not again after F3
         public void Reset()
         {
-            frame = 0; divActive = false; streaming = false;
+            frame = 0; divActive = false; streaming = false; nmiPending = nmiActive = retnSeen = configMode = false; divCtl = configBank = 0;
             if (fromIni && byMd5.Count > 0) Identify();
             else if (dd01nop && breakpoints == null) breakpoints = FindBreakpoints(LoadedFile());
         }
