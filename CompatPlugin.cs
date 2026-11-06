@@ -1,31 +1,29 @@
-// Compatibility plugin for CSpect 3.
-// Some games that worked in CSpect 2, or on the Next, crash in CSpect 3. The fixes are chosen per game with
-// the CSPECT_COMPAT environment variable (comma-separated list). Without it, they come from Compat.ini next
+// Compatibility plugin for CSpect: it fixes some incompatibilities between CSpect and games for the Next.
+// The fixes are chosen per game with the CSPECT_COMPAT environment variable (comma-separated list). Without it, they come from Compat.ini next
 // to Compat.dll: the options of the file CSpect has loaded, found by its MD5, or the default= options.
 //
-//   l2bank9   Layer 2 starts at 16K bank 9 (Next register $12), as in older cores. CSpect 3 sets it to 8
-//             when it loads a .snx; games that never set it (e.g. Montana Mike) then draw over their data.
-//   nodivmmc  DivMMC automap off (bit 4 of Next register $0A). CSpect 3 maps the DivMMC memory when the
+//   l2bank9   Layer 2 starts at 16K bank 9 (Next register $12). CSpect sets it to 8 when it loads a .snx;
+//             games that never set it and expect 9 (e.g. Montana Mike) then draw over their data.
+//   nodivmmc  DivMMC automap off (bit 4 of Next register $0A). CSpect maps the DivMMC memory when the
 //             CPU reaches $0038 even with RAM in place of the ROM; a game that calls code there (e.g. Deltas
 //             Shadow) then runs the DivMMC memory, which CSpect fills with random values.
-//   dd01nop   DD 01 in the game's .nex is a 2-byte NOP, as in CSpect 2, where it was the debugger's BREAK
-//             opcode (skipped when the debugger was off). CSpect 3 uses FD 00 for BREAK, so breakpoints
-//             left in a game (e.g. Elite Next) run as LD BC,nn and swallow the next instruction. The .nex
+//   dd01nop   DD 01 in the game's .nex is a 2-byte NOP. These bytes are breakpoints left in a game by its
+//             developer (e.g. Elite Next); CSpect runs them as LD BC,nn, which swallows the next instruction. The .nex
 //             is the one in CSPECT_COMPAT_FILE, or else the one CSpect has loaded; the bytes are changed in
 //             memory only, before the game starts.
-//   zeroram   RAM outside the 128K snapshot (8K pages 16-255) cleared before the game starts, as in CSpect 2.
-//             CSpect 3 fills it with random values, and a game that shows Layer 2 without clearing it
+//   zeroram   RAM outside the 128K snapshot (8K pages 16-255) cleared before the game starts.
+//             CSpect fills it with random values, and a game that shows Layer 2 without clearing it
 //             (e.g. Spice Invaderz) shows them. Only for .snx/.sna games: a .nex can load banks there.
 //   divfirst  DivMMC memory comes before Layer 2 mapping, as on the Next. With Layer 2 write-mapped at $0000
-//             (port $123B bit 0), CSpect 3 sends the writes of DivMMC code (NextZXOS's interrupt handler and
+//             (port $123B bit 0), CSpect sends the writes of DivMMC code (NextZXOS's interrupt handler and
 //             tape traps) to Layer 2, so NextZXOS loses its saved stack pointer and the machine resets (e.g.
 //             4K Race Next, whose loader copies its screen into Layer 2 while loading from tape). While DivMMC
 //             code runs, those writes are kept by the plugin and given back when it reads them.
-//   im2ff     IM 2 vector read at I*256+$FF, as on the Next (the bus reads $FF). CSpect 3 reads it at I*256+$00,
+//   im2ff     IM 2 vector read at I*256+$FF, as on the Next (the bus reads $FF). CSpect reads it at I*256+$00,
 //             so a game that sets only the vector at $xxFF (e.g. 4K Race Next, Manic Miner Trick Or Treat AY)
 //             jumps to a random address. CSpect calls the plugins' Tick right after it has taken the frame
 //             interrupt: if the CPU has just jumped through the vector at $xx00, it is sent through $xxFF.
-//   sdstream  streaming from the SD card done by the plugin. NextZXOS's DISK_STRMSTART fails in CSpect 3, and a
+//   sdstream  streaming from the SD card done by the plugin. NextZXOS's DISK_STRMSTART can fail in CSpect, and a
 //             game that streams its music from the SD card (e.g. The Way of the Exploding Fist) stops on a
 //             black screen. RST $08 DISK_STRMSTART / DISK_STRMEND return at once without error; while the
 //             stream is on, the game's own reads of the SD card port $EB get the file's blocks, each followed
@@ -34,9 +32,24 @@
 //   divnmi    DivMMC NMI (Next register $02 bit 2) with the DivMMC memory paged in, as on the Next: from $0066
 //             to the RETN, $0000-$1FFF is the DivMMC ROM and $2000-$3FFF the DivMMC RAM bank of port $E3, as the
 //             game wrote them (the RAM with CONMEM, port $E3 bit 7; the ROM in config mode, registers $03 and
-//             $04); a new request while it is paged in is ignored. CSpect 3 runs the game's RAM at $0066, so a
+//             $04); a new request while it is paged in is ignored. CSpect runs the game's RAM at $0066, so a
 //             game that plays its sound from DivMMC NMIs (e.g. Atic Atac Next) crashes, or stays on the title
 //             screen waiting for the sound. The plugin keeps its own copy of that memory.
+//             If the game also lets NMIs break the DMA (Next register $CC bit 7), which CSpect ignores, long DMA
+//             transfers from memory to memory or to the sprite ports are done at once by the plugin: otherwise
+//             the CPU stops during them, the NMIs are lost and the sound crackles (e.g. Atic Atac Next).
+//   notemu    Next register $00 (machine ID) reads as a Next instead of an emulator, for the game's code only
+//             (code at $4000 and above; NextZXOS still sees CSpect). A game that treats emulators differently
+//             (e.g. the 2023 version of The Way of the Exploding Fist, which then plays its music with a slower
+//             timer) behaves as on the Next.
+//   pal44     a palette colour written through Next register $44 changes only at the second of its two writes, as
+//             on the Next. CSpect changes it at the first, so a game that writes $44 once and then moves on (e.g.
+//             The Way of the Exploding Fist, which turns colour 128 of its title black) gets a wrong colour.
+//   ctcirq    CTC interrupts turned off (Next register $C5) and on again work as on the Next. In CSpect they do not
+//             come back without programming the CTC again, so a game that only turns them on again (e.g. the 2024
+//             version of The Way of the Exploding Fist, for the fanfare of its SpecNext screen) stays silent. When
+//             a channel comes back without having been programmed, the plugin has the CPU program it again, with
+//             the game's last values, in a few instructions of its own; the game's registers are then restored.
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -48,7 +61,7 @@ namespace Compat
     public class CompatPlugin : iPlugin
     {
         iCSpect CSpect;
-        bool l2bank9, nodivmmc, dd01nop, zeroram, divfirst, im2ff, sdstream, divnmi, cleared;
+        bool l2bank9, nodivmmc, dd01nop, zeroram, divfirst, im2ff, sdstream, divnmi, notemu, pal44, ctcirq, cleared;
         long frame;
         List<int> breakpoints;         // DD 01 positions: 16K bank * 16384 + offset
         int patched;
@@ -67,7 +80,7 @@ namespace Compat
         // sets the option flags from a comma-separated list
         void SetOptions(string opts)
         {
-            l2bank9 = nodivmmc = dd01nop = zeroram = divfirst = im2ff = sdstream = divnmi = false;
+            l2bank9 = nodivmmc = dd01nop = zeroram = divfirst = im2ff = sdstream = divnmi = notemu = pal44 = ctcirq = false;
             foreach (string o in opts.Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries))
             {
                 if (o.Equals("l2bank9", StringComparison.OrdinalIgnoreCase)) l2bank9 = true;
@@ -78,6 +91,9 @@ namespace Compat
                 else if (o.Equals("im2ff", StringComparison.OrdinalIgnoreCase)) im2ff = true;
                 else if (o.Equals("sdstream", StringComparison.OrdinalIgnoreCase)) sdstream = true;
                 else if (o.Equals("divnmi", StringComparison.OrdinalIgnoreCase)) divnmi = true;
+                else if (o.Equals("notemu", StringComparison.OrdinalIgnoreCase)) notemu = true;
+                else if (o.Equals("pal44", StringComparison.OrdinalIgnoreCase)) pal44 = true;
+                else if (o.Equals("ctcirq", StringComparison.OrdinalIgnoreCase)) ctcirq = true;
                 else Console.WriteLine(" Compat: unknown option " + o);
             }
         }
@@ -153,15 +169,34 @@ namespace Compat
                 string file = Environment.GetEnvironmentVariable("CSPECT_COMPAT_FILE");
                 if (dd01nop && !string.IsNullOrEmpty(file)) breakpoints = FindBreakpoints(file);
             }
+            if (pal44 && !dd01nop && !zeroram) foreach (int r in new[] { 0x40, 0x41, 0x43, 0x44 }) io.Add(new sIO(r, eAccess.NextReg_Write, 0, 0));
+            if (ctcirq)
+            {
+                if (!dd01nop && !zeroram) io.Add(new sIO(0xC5, eAccess.NextReg_Write, 0, 0));
+                for (int c = 0x18; c <= 0x1F; c++) io.Add(new sIO((c << 8) | 0x3B, eAccess.Port_Write, 0, 0));
+                for (int a = CtcStub; a < CtcStub + CtcStubCode.Length; a++) io.Add(new sIO(a, eAccess.Memory_Read, 0, 0));
+                if (!divnmi) for (int a = 0; a < 0x10000; a++) io.Add(new sIO(a, eAccess.Memory_EXE, 0, 0));
+            }
+            if (notemu)
+            {
+                io.Add(new sIO(0x243B, eAccess.Port_Write, 0, 0));
+                io.Add(new sIO(0x253B, eAccess.Port_Read, 0, 0));
+            }
             if (dd01nop || zeroram)
             {
                 // CSpect writes the Next registers while it loads the file: the patch and the RAM clear are
                 // done at those writes (frame 0), so that they are in place before the game's first instruction
                 for (int r = 0; r < 256; r++) io.Add(new sIO(r, eAccess.NextReg_Write, 0, 0));
             }
-            else if (divnmi) for (int r = 2; r <= 4; r++) io.Add(new sIO(r, eAccess.NextReg_Write, 0, 0));
+            else if (divnmi)
+            {
+                for (int r = 2; r <= 4; r++) io.Add(new sIO(r, eAccess.NextReg_Write, 0, 0));
+                io.Add(new sIO(0xCC, eAccess.NextReg_Write, 0, 0));
+            }
             if (divnmi)
             {
+                // OUT (C),r puts B on the high byte of the port: every $xx6B
+                for (int b = 0; b < 256; b++) io.Add(new sIO((b << 8) | 0x6B, eAccess.Port_Write, 0, 0));
                 // OUT ($E3),A puts A on the high byte of the port: every $xxE3
                 for (int b = 0; b < 256; b++) if (b != 0 || !divfirst) io.Add(new sIO((b << 8) | 0xE3, eAccess.Port_Write, 0, 0));
                 for (int a = 0; a < 0x4000; a++)
@@ -197,7 +232,7 @@ namespace Compat
                 if (byMd5.Count > 0) Console.WriteLine(" Compat added (Compat.ini, " + byMd5.Count + " entries)");
                 SetOptions("");
             }
-            else if (l2bank9 || nodivmmc || dd01nop || zeroram || divfirst || im2ff || sdstream || divnmi) Console.WriteLine(" Compat added (" + opts.Trim() + ")");
+            else if (l2bank9 || nodivmmc || dd01nop || zeroram || divfirst || im2ff || sdstream || divnmi || notemu || pal44 || ctcirq) Console.WriteLine(" Compat added (" + opts.Trim() + ")");
             return io;
         }
 
@@ -234,7 +269,7 @@ namespace Compat
             return found;
         }
 
-        // bank 5 (pages 10-11) is kept apart by CSpect 3: it is written at $4000, where it is when a file loads
+        // bank 5 (pages 10-11) is kept apart by CSpect: it is written at $4000, where it is when a file loads
         byte PeekBank(int bank, int offset)
         {
             if (bank == 5) return CSpect.Peek((ushort)(0x4000 + offset));
@@ -268,7 +303,10 @@ namespace Compat
             if (_type == eAccess.Port_Write)
             {
                 if (_port == 0x123B) layer2Port = _value;
+                else if (_port == 0x243B) nextRegSelected = _value;
+                else if (ctcirq && (_port & 0xFF) == 0x3B && (_port >> 8) >= 0x18 && (_port >> 8) <= 0x1F) CtcWrite((_port >> 8) - 0x18, _value);
                 else if ((_port & 0xFF) == 0xE3) { divBank = _value & 0x0F; divCtl = _value; }
+                else if (divnmi && (_port & 0xFF) == 0x6B) return DmaWrite(_value);
                 return false;
             }
             if (_type == eAccess.Memory_Write)
@@ -294,6 +332,20 @@ namespace Compat
                 }
                 return false;
             }
+            if (_type == eAccess.NextReg_Write && ctcirq && _port == 0xC5) CtcEnable(_value);
+            if (_type == eAccess.NextReg_Write && pal44 && !pal44Busy)
+            {
+                if (_port == 0x40 || _port == 0x41 || _port == 0x43) pal44First = -1;   // back to the first write
+                else if (_port == 0x44)
+                {
+                    if (pal44First < 0) { pal44First = _value; return true; }           // kept until the second write
+                    pal44Busy = true;
+                    CSpect.SetNextRegister(0x44, (byte)pal44First, 0);
+                    pal44Busy = false;
+                    pal44First = -1;
+                    return false;
+                }
+            }
             // divnmi: an NMI is requested (written 0 to clear the request)
             // (ignored while the DivMMC memory is paged in, as on the Next: the request is dropped)
             if (_type == eAccess.NextReg_Write && divnmi && _port == 0x02)
@@ -304,6 +356,7 @@ namespace Compat
             // divnmi: config mode (machine type 7 in register $03), with register $04 = SRAM bank at $0000
             if (_type == eAccess.NextReg_Write && divnmi && _port == 0x03) configMode = (_value & 0x07) == 0x07;
             if (_type == eAccess.NextReg_Write && divnmi && _port == 0x04) configBank = _value;
+            if (_type == eAccess.NextReg_Write && divnmi && _port == 0xCC) nmiBreaksDma = (_value & 0x80) != 0;
             // the loader's first register write comes after CSpect has filled the RAM with random values
             if (_type == eAccess.NextReg_Write && frame == 0 && zeroram && !cleared)
             {
@@ -460,6 +513,12 @@ namespace Compat
         public byte Read(eAccess _type, int _port, int _id, out bool _isvalid)
         {
             _isvalid = false;
+            if (_type == eAccess.Port_Read && _port == 0x253B)
+            {
+                if (nextRegSelected != 0 || CSpect.GetRegs().PC < 0x4000) return 0;
+                _isvalid = true;
+                return 0x0A;           // machine ID of the Next (CSpect: 8, emulator)
+            }
             // sdstream: the game reads the stream itself from the SD card port: 512 bytes of each block, 2 CRC
             // bytes, then $FF until the data token $FE of the next block. NextZXOS's own reads ($0000-$3FFF) are
             // not touched.
@@ -469,6 +528,11 @@ namespace Compat
                 _isvalid = true;
                 return StreamByte();
             }
+            if (_type == eAccess.Memory_Read && ctcStubActive && _port >= CtcStub && _port < CtcStub + CtcStubCode.Length)
+            {
+                _isvalid = true;
+                return CtcStubCode[_port - CtcStub];
+            }
             if (_type == eAccess.Memory_Read)
             {
                 if (divnmi && _port < 0x4000 && DivPaged()) { _isvalid = true; return DivPeek(_port); }
@@ -477,6 +541,7 @@ namespace Compat
                 return 0;
             }
             if (_type != eAccess.Memory_EXE) return 0;
+            if (ctcirq) CtcExe(_port);
             if (divnmi) DivNmiExe(_port);
             if (sdstream && _port == 0x0008 && SkipStream()) return 0;
             if (!divfirst) return 0;
@@ -511,10 +576,145 @@ namespace Compat
         // not again after F3
         public void Reset()
         {
+            nmiBreaksDma = false; dmaNext.Clear(); pal44First = -1; ctcEnabled = ctcStale = ctcRestart = 0; ctcStubActive = false;
             frame = 0; divActive = false; streaming = false; nmiPending = nmiActive = retnSeen = configMode = false; divCtl = configBank = 0;
             if (fromIni && byMd5.Count > 0) Identify();
             else if (dd01nop && breakpoints == null) breakpoints = FindBreakpoints(LoadedFile());
         }
+        // ctcirq: the last values written to each CTC channel, and the channels turned off and not programmed since
+        const int CtcStub = 0xFFF0;    // where the plugin's instructions are read from while they run
+        static readonly byte[] CtcStubCode = { 0xED, 0x61, 0xED, 0x69, 0x00 };   // OUT (C),H; OUT (C),L; NOP
+        int[] ctcControl = new int[8], ctcConstant = new int[8];
+        bool[] ctcConstantNext = new bool[8];
+        int ctcEnabled, ctcStale, ctcRestart;
+        bool ctcStubActive;
+        Z80Regs ctcSaved;
+
+        void CtcEnable(byte v)
+        {
+            ctcStale |= ctcEnabled & ~v;               // turned off
+            ctcRestart |= ctcStale & v & ~ctcEnabled;  // on again, not programmed
+            ctcStale &= ~ctcRestart;
+            ctcEnabled = v;
+        }
+
+        void CtcWrite(int channel, byte v)
+        {
+            if (ctcConstantNext[channel]) { ctcConstant[channel] = v; ctcConstantNext[channel] = false; }
+            else if ((v & 1) != 0) { ctcControl[channel] = v; ctcConstantNext[channel] = (v & 4) != 0; }
+            if (!ctcStubActive) { ctcStale &= ~(1 << channel); ctcRestart &= ~(1 << channel); }
+        }
+
+        void CtcExe(int pc)
+        {
+            if (ctcStubActive)
+            {
+                if (pc != CtcStub + 4) return;         // the NOP: done
+                ctcStubActive = false;
+                CSpect.SetRegs(ctcSaved);
+                return;
+            }
+            if (ctcRestart == 0) return;
+            int c = 0;
+            while ((ctcRestart & (1 << c)) == 0) c++;
+            ctcRestart &= ~(1 << c);
+            if ((ctcControl[c] & 4) == 0) return;      // no time constant known
+            ctcSaved = CSpect.GetRegs();
+            Z80Regs r = CSpect.GetRegs();
+            r.BC = (ushort)(((0x18 + c) << 8) | 0x3B);
+            r.HL = (ushort)((ctcControl[c] << 8) | ctcConstant[c]);
+            r.PC = CtcStub;
+            r.IFF1 = false;
+            ctcStubActive = true;
+            CSpect.SetRegs(r);
+        }
+
+        int nextRegSelected = -1;      // notemu: last value written to port $243B
+        int pal44First = -1;           // pal44: first write to register $44, waiting for the second
+        bool pal44Busy;
+
+        // divnmi: the zxnDMA registers, followed from the writes to port $6B
+        const int DmaAtOnce = 256;     // shorter transfers stop the CPU for less than the time between two NMIs
+        bool nmiBreaksDma, dmaAtoB = true, dmaAIo, dmaBIo, dmaTimed;
+        int dmaAMode = 1, dmaBMode = 1, dmaA, dmaB, dmaLength;   // modes: 0 decrement, 1 increment, 2 fixed
+        Queue<int> dmaNext = new Queue<int>();                   // what the next bytes written are
+
+        void DmaFollowers(int value, int mask, params int[] fields)
+        {
+            for (int i = 0; i < fields.Length; i++) if ((value & (mask << i)) != 0) dmaNext.Enqueue(fields[i]);
+        }
+
+        // Returns true if the transfer was done here, so that CSpect does not start it
+        bool DmaWrite(byte v)
+        {
+            if (dmaNext.Count > 0)
+            {
+                switch (dmaNext.Dequeue())
+                {
+                    case 0: dmaA = (dmaA & 0xFF00) | v; break;
+                    case 1: dmaA = (dmaA & 0x00FF) | (v << 8); break;
+                    case 2: dmaLength = (dmaLength & 0xFF00) | v; break;
+                    case 3: dmaLength = (dmaLength & 0x00FF) | (v << 8); break;
+                    case 4: dmaB = (dmaB & 0xFF00) | v; break;
+                    case 5: dmaB = (dmaB & 0x00FF) | (v << 8); break;
+                    case 6: if ((v & 0x20) != 0) dmaNext.Enqueue(7); break;   // port B timing: the prescaler follows
+                    case 7: dmaTimed = v != 0; break;
+                }
+                return false;
+            }
+            if ((v & 0x80) == 0)
+            {
+                if ((v & 3) != 0)              // WR0
+                {
+                    dmaAtoB = (v & 4) != 0;
+                    DmaFollowers(v, 8, 0, 1, 2, 3);
+                }
+                else if ((v & 7) == 4)         // WR1, port A
+                {
+                    dmaAIo = (v & 8) != 0;
+                    dmaAMode = (v >> 4) & 3;
+                    if ((v & 0x40) != 0) dmaNext.Enqueue(8);
+                }
+                else if ((v & 7) == 0)         // WR2, port B
+                {
+                    dmaBIo = (v & 8) != 0;
+                    dmaBMode = (v >> 4) & 3;
+                    if ((v & 0x40) != 0) dmaNext.Enqueue(6);
+                }
+                return false;
+            }
+            if ((v & 3) == 1)                  // WR4
+            {
+                DmaFollowers(v, 4, 4, 5);
+                return false;
+            }
+            if ((v & 3) != 3) return false;
+            if (v == 0xBB) { dmaNext.Enqueue(8); return false; }     // read mask
+            if (v == 0xC3) { dmaTimed = false; return false; }       // reset
+            if (v != 0x87 || !nmiBreaksDma || dmaTimed || dmaLength < DmaAtOnce) return false;
+
+            int src = dmaAtoB ? dmaA : dmaB, dst = dmaAtoB ? dmaB : dmaA;
+            int srcMode = dmaAtoB ? dmaAMode : dmaBMode, dstMode = dmaAtoB ? dmaBMode : dmaAMode;
+            if (dmaAtoB ? dmaAIo : dmaBIo) return false;             // only from memory
+            bool toIo = dmaAtoB ? dmaBIo : dmaAIo;
+            // only the sprite ports: OutPort to other ports does not work like the DMA (palette data at $253B
+            // gives wrong colours)
+            if (toIo && dst != 0x57 && dst != 0x5B) return false;
+            busy = true;
+            for (int i = 0; i < dmaLength; i++)
+            {
+                byte d = CSpect.Peek((ushort)src);
+                if (toIo) CSpect.OutPort((ushort)dst, d); else CSpect.Poke((ushort)dst, d);
+                if (srcMode == 0) src--; else if (srcMode == 1) src++;
+                if (dstMode == 0) dst--; else if (dstMode == 1) dst++;
+            }
+            busy = false;
+            return true;
+        }
+
+        // Not in iPlugin in every version of CSpect: virtual, so that the same DLL loads in all of them.
+        public virtual string GetName() { return "Compat"; }
+        public virtual string GetDescription() { return "Fixes some incompatibilities between CSpect and games for the Next"; }
         public void OSTick() { }
         public bool KeyPressed(int _id) { return false; }
         public void Quit() { if (music != null) music.Close(); }
